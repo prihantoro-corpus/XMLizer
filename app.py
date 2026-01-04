@@ -6,7 +6,7 @@ from lxml import etree
 st.set_page_config(page_title="XMLizer", layout="centered")
 
 st.title("🧩 XMLizer")
-st.caption("Convert any document into clean, sentence-based XML")
+st.caption("Convert text or multiple documents into clean, sentence-based XML")
 
 # --------------------------------------------------
 # Utilities
@@ -41,10 +41,6 @@ def escape_xml_entities(text):
 
 
 def sentence_split(text):
-    """
-    Rule-based sentence boundary detection.
-    Splits on . ! ? followed by whitespace.
-    """
     text = re.sub(r"\s+", " ", text.strip())
     sentences = re.split(r"(?<=[.!?])\s+", text)
     return [s for s in sentences if s.strip()]
@@ -53,9 +49,7 @@ def sentence_split(text):
 def wrap_as_xml(sentences, root_tag="document"):
     blocks = []
     for i, sent in enumerate(sentences, start=1):
-        blocks.append(
-            f"<s n=\"{i}\">\n{sent}\n</s>"
-        )
+        blocks.append(f"<s n=\"{i}\">\n{sent}\n</s>")
 
     body = "\n".join(blocks)
 
@@ -68,57 +62,99 @@ def wrap_as_xml(sentences, root_tag="document"):
 
 def validate_and_repair_xml(xml_text):
     parser = etree.XMLParser(recover=True)
-    try:
-        tree = etree.fromstring(xml_text.encode("utf-8"), parser)
-        repaired = etree.tostring(
-            tree,
-            encoding="utf-8",
-            xml_declaration=True
-        ).decode("utf-8")
-        return True, repaired
-    except Exception as e:
-        return False, str(e)
+    tree = etree.fromstring(xml_text.encode("utf-8"), parser)
+    return etree.tostring(
+        tree,
+        encoding="utf-8",
+        xml_declaration=True
+    ).decode("utf-8")
+
+
+def limited_preview(xml_text, head=5, mid=5, tail=5):
+    lines = xml_text.splitlines()
+    total = len(lines)
+
+    if total <= head + mid + tail:
+        return xml_text
+
+    middle_start = max((total // 2) - (mid // 2), head)
+    middle_end = middle_start + mid
+
+    preview_lines = (
+        lines[:head]
+        + ["..."]
+        + lines[middle_start:middle_end]
+        + ["..."]
+        + lines[-tail:]
+    )
+
+    return "\n".join(preview_lines)
 
 # --------------------------------------------------
 # UI
 # --------------------------------------------------
 
-uploaded_file = st.file_uploader(
-    "Upload any document (TXT, CSV, XML, etc.)",
-    type=None
+input_mode = st.radio(
+    "Input mode",
+    ["Direct text input", "Upload file(s)"],
+    horizontal=True
 )
 
-if uploaded_file:
-    file_bytes = uploaded_file.read()
+all_texts = []
 
-    # 1. Detect encoding
-    text, detected_encoding = detect_and_decode(file_bytes)
-    st.success(f"Detected encoding: **{detected_encoding} → UTF-8**")
+if input_mode == "Direct text input":
+    text = st.text_area(
+        "Paste your text here",
+        height=250,
+        placeholder="Paste any text here..."
+    )
+    if text.strip():
+        all_texts.append(text)
 
-    # 2. Clean illegal XML characters
-    cleaned_text = clean_illegal_xml_chars(text)
+else:
+    uploaded_files = st.file_uploader(
+        "Upload one or more documents",
+        type=None,
+        accept_multiple_files=True
+    )
 
-    # 3. Sentence detection
+    if uploaded_files:
+        for f in uploaded_files:
+            text, enc = detect_and_decode(f.read())
+            st.success(f"{f.name}: {enc} → UTF-8")
+            all_texts.append(text)
+
+# --------------------------------------------------
+# Processing
+# --------------------------------------------------
+
+if all_texts:
+    combined_text = "\n".join(all_texts)
+
+    # Clean
+    cleaned_text = clean_illegal_xml_chars(combined_text)
+
+    # Sentence detection
     sentences = sentence_split(cleaned_text)
-    st.info(f"Detected **{len(sentences)} sentences**")
+    st.info(f"Detected **{len(sentences)} sentences** (combined)")
 
-    # 4. Escape XML entities
+    # Escape entities
     escaped_sentences = [escape_xml_entities(s) for s in sentences]
 
-    # 5. Wrap into XML
+    # Wrap XML
     xml_text = wrap_as_xml(escaped_sentences)
 
-    # 6. Validate & repair
-    is_valid, final_xml = validate_and_repair_xml(xml_text)
-
-    if is_valid:
+    # Validate & repair
+    try:
+        final_xml = validate_and_repair_xml(xml_text)
         st.success("XML is well-formed (after repair if needed)")
-    else:
-        st.error("XML validation failed")
+    except Exception as e:
+        st.error(f"XML validation failed: {e}")
+        final_xml = xml_text
 
     # Preview
-    with st.expander("🔍 XML Preview"):
-        st.code(final_xml, language="xml")
+    with st.expander("🔍 XML Preview (limited)"):
+        st.code(limited_preview(final_xml), language="xml")
 
     # Download
     st.download_button(
