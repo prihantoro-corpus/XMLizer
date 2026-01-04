@@ -49,7 +49,7 @@ def sentence_split(text):
     return [s for s in sentences if s.strip()]
 
 
-def wrap_as_xml(sentences, root_tag="document"):
+def wrap_as_xml(sentences):
     blocks = []
     for i, sent in enumerate(sentences, start=1):
         blocks.append(f"<s n=\"{i}\">\n{sent}\n</s>")
@@ -57,9 +57,9 @@ def wrap_as_xml(sentences, root_tag="document"):
     body = "\n".join(blocks)
 
     return f"""<?xml version="1.0" encoding="UTF-8"?>
-<{root_tag}>
+<document>
 {body}
-</{root_tag}>
+</document>
 """
 
 
@@ -94,7 +94,7 @@ def limited_preview(xml_text, head=5, mid=5, tail=5):
     return "\n".join(preview_lines)
 
 
-def process_text_to_xml(text):
+def process_single_text(text):
     cleaned = clean_illegal_xml_chars(text)
     sentences = sentence_split(cleaned)
     escaped = [escape_xml_entities(s) for s in sentences]
@@ -111,7 +111,7 @@ input_mode = st.radio(
     horizontal=True
 )
 
-results = []
+outputs = []
 
 if input_mode == "Direct text input":
     text = st.text_area(
@@ -119,9 +119,10 @@ if input_mode == "Direct text input":
         height=250,
         placeholder="Paste any text here..."
     )
+
     if text.strip():
-        xml, count = process_text_to_xml(text)
-        results.append(("input_text.xml", xml, count))
+        xml, count = process_single_text(text)
+        outputs.append(("input_text.xml", xml, count))
 
 else:
     uploaded_files = st.file_uploader(
@@ -132,27 +133,29 @@ else:
 
     if uploaded_files:
         for f in uploaded_files:
-            text, enc = detect_and_decode(f.read())
+            raw_text, enc = detect_and_decode(f.read())
             st.success(f"{f.name}: {enc} → UTF-8")
-            xml, count = process_text_to_xml(text)
+
+            xml, count = process_single_text(raw_text)
+
             xml_name = os.path.splitext(f.name)[0] + ".xml"
-            results.append((xml_name, xml, count))
+            outputs.append((xml_name, xml, count))
 
 # --------------------------------------------------
 # Output
 # --------------------------------------------------
 
-if results:
-    total_sentences = sum(r[2] for r in results)
-    st.info(f"Processed **{len(results)} document(s)** · **{total_sentences} sentences**")
+if outputs:
+    total_sentences = sum(o[2] for o in outputs)
+    st.info(f"Processed **{len(outputs)} document(s)** · **{total_sentences} sentences**")
 
-    # Preview first document only
+    # Preview FIRST file only (never merged)
     with st.expander("🔍 XML Preview (limited)"):
-        st.code(limited_preview(results[0][1]), language="xml")
+        st.code(limited_preview(outputs[0][1]), language="xml")
 
-    # Single XML
-    if len(results) == 1:
-        name, xml, _ = results[0]
+    # One document → one XML
+    if len(outputs) == 1:
+        name, xml, _ = outputs[0]
         st.download_button(
             label="⬇️ Download XML",
             data=xml.encode("utf-8"),
@@ -160,17 +163,17 @@ if results:
             mime="application/xml"
         )
 
-    # Multiple XML → ZIP (flat structure)
+    # Multiple documents → ZIP (flat, separated)
     else:
         zip_buffer = BytesIO()
         with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as z:
-            for name, xml, _ in results:
+            for name, xml, _ in outputs:
                 z.writestr(name, xml)
 
         zip_buffer.seek(0)
 
         st.download_button(
-            label="⬇️ Download ZIP (XML files)",
+            label="⬇️ Download ZIP (separate XMLs)",
             data=zip_buffer,
             file_name="xmlizer_output.zip",
             mime="application/zip"
