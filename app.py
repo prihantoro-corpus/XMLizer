@@ -152,14 +152,15 @@ if results:
 
     # Single XML
     if len(results) == 1:
+        name, xml, _ = results[0]
         st.download_button(
             label="⬇️ Download XML",
-            data=results[0][1].encode("utf-8"),
-            file_name=results[0][0],
+            data=xml.encode("utf-8"),
+            file_name=name,
             mime="application/xml"
         )
 
-    # Multiple XML → ZIP
+    # Multiple XML → ZIP (flat structure)
     else:
         zip_buffer = BytesIO()
         with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as z:
