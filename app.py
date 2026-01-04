@@ -2,11 +2,14 @@ import streamlit as st
 import chardet
 import re
 from lxml import etree
+from io import BytesIO
+import zipfile
+import os
 
 st.set_page_config(page_title="XMLizer", layout="centered")
 
 st.title("🧩 XMLizer")
-st.caption("Convert text or multiple documents into clean, sentence-based XML")
+st.caption("Convert text or documents into clean, sentence-based XML")
 
 # --------------------------------------------------
 # Utilities
@@ -90,6 +93,14 @@ def limited_preview(xml_text, head=5, mid=5, tail=5):
 
     return "\n".join(preview_lines)
 
+
+def process_text_to_xml(text):
+    cleaned = clean_illegal_xml_chars(text)
+    sentences = sentence_split(cleaned)
+    escaped = [escape_xml_entities(s) for s in sentences]
+    xml_raw = wrap_as_xml(escaped)
+    return validate_and_repair_xml(xml_raw), len(sentences)
+
 # --------------------------------------------------
 # UI
 # --------------------------------------------------
@@ -100,7 +111,7 @@ input_mode = st.radio(
     horizontal=True
 )
 
-all_texts = []
+results = []
 
 if input_mode == "Direct text input":
     text = st.text_area(
@@ -109,7 +120,8 @@ if input_mode == "Direct text input":
         placeholder="Paste any text here..."
     )
     if text.strip():
-        all_texts.append(text)
+        xml, count = process_text_to_xml(text)
+        results.append(("input_text.xml", xml, count))
 
 else:
     uploaded_files = st.file_uploader(
@@ -122,44 +134,43 @@ else:
         for f in uploaded_files:
             text, enc = detect_and_decode(f.read())
             st.success(f"{f.name}: {enc} → UTF-8")
-            all_texts.append(text)
+            xml, count = process_text_to_xml(text)
+            xml_name = os.path.splitext(f.name)[0] + ".xml"
+            results.append((xml_name, xml, count))
 
 # --------------------------------------------------
-# Processing
+# Output
 # --------------------------------------------------
 
-if all_texts:
-    combined_text = "\n".join(all_texts)
+if results:
+    total_sentences = sum(r[2] for r in results)
+    st.info(f"Processed **{len(results)} document(s)** · **{total_sentences} sentences**")
 
-    # Clean
-    cleaned_text = clean_illegal_xml_chars(combined_text)
-
-    # Sentence detection
-    sentences = sentence_split(cleaned_text)
-    st.info(f"Detected **{len(sentences)} sentences** (combined)")
-
-    # Escape entities
-    escaped_sentences = [escape_xml_entities(s) for s in sentences]
-
-    # Wrap XML
-    xml_text = wrap_as_xml(escaped_sentences)
-
-    # Validate & repair
-    try:
-        final_xml = validate_and_repair_xml(xml_text)
-        st.success("XML is well-formed (after repair if needed)")
-    except Exception as e:
-        st.error(f"XML validation failed: {e}")
-        final_xml = xml_text
-
-    # Preview
+    # Preview first document only
     with st.expander("🔍 XML Preview (limited)"):
-        st.code(limited_preview(final_xml), language="xml")
+        st.code(limited_preview(results[0][1]), language="xml")
 
-    # Download
-    st.download_button(
-        label="⬇️ Download XML",
-        data=final_xml.encode("utf-8"),
-        file_name="output.xml",
-        mime="application/xml"
-    )
+    # Single XML
+    if len(results) == 1:
+        st.download_button(
+            label="⬇️ Download XML",
+            data=results[0][1].encode("utf-8"),
+            file_name=results[0][0],
+            mime="application/xml"
+        )
+
+    # Multiple XML → ZIP
+    else:
+        zip_buffer = BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as z:
+            for name, xml, _ in results:
+                z.writestr(name, xml)
+
+        zip_buffer.seek(0)
+
+        st.download_button(
+            label="⬇️ Download ZIP (XML files)",
+            data=zip_buffer,
+            file_name="xmlizer_output.zip",
+            mime="application/zip"
+        )
